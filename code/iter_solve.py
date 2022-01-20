@@ -29,6 +29,48 @@ class obj_attrs:
         set_attrs(self, vars, excl=excl)
 
 
+class CubicSplineLinExt(CubicSpline):
+    def __init__(self, x, y, bc_type='not-a-knot', extrapolate='linear'):
+        """
+        Linearly extrapolate outside the range
+
+        Example
+        -------
+        from scipy.interpolate import PchipInterpolator, CubicSpline
+        x = np.linspace(-0.7, 1, 11)
+        a = np.linspace(-1.5, 2, 100)
+        y = np.sin(x * pi)
+
+        f0 = CubicSplineLinExt(x, y)
+        f1 = CubicSpline(x, y)
+        f2 = PchipInterpolator(x, y)
+
+        plt.figure(figsize=(8, 4))
+
+        plt.subplot(121)
+        plt.scatter(x, y)
+        for i, f in enumerate([f0, f1, f2]):
+            plt.plot(a, f(a), ls=['-', '--', ':'][i])
+        plt.ylim(-2, 2)
+
+        plt.subplot(122)
+        for i, f in enumerate([f0, f1, f2]):
+            plt.plot(a, f(a, nu=1) / np.pi, ls=['-', '--', ':'][i])
+        plt.ylim(-2, 2)
+        """
+        if extrapolate == 'linear':
+            super().__init__(x, y, bc_type=bc_type, extrapolate=True)
+            x0, x1 = x[0], x[-1]
+            y0, y1 = y[0], y[-1]
+            d0, d1 = self([x0, x1], nu=1)
+            c0 = np.array([[0, 0, d0, y0]]).T
+            c1 = np.array([[0, 0, d1, y1]]).T
+            self.x = np.hstack([x0, self.x, x1])
+            self.c = np.hstack([c0, self.c, c1])
+        else:
+            super().__init__(x, y, bc_type=bc_type, extrapolate=extrapolate)
+
+
 class GausQuad:
     def __init__(self, n):
         """Prepare tables for Gauss–Jacobi quadrature grid
@@ -106,8 +148,8 @@ class interp_U_lnr:
         lnr, U = lnr[ix], U[ix]
 
         Us = self.Es_E_func(U, U_min)
-        Us_lnr_func = CubicSpline(lnr, Us, extrapolate=True)
-        lnr_Us_func = CubicSpline(Us, lnr, extrapolate=True)
+        Us_lnr_func = CubicSplineLinExt(lnr, Us, extrapolate=True)
+        lnr_Us_func = CubicSplineLinExt(Us, lnr, extrapolate=True)
         Us_lnr_der1 = Us_lnr_func.derivative(1)
 
         r = np.exp(lnr)
@@ -167,10 +209,10 @@ class interp_U_lnr:
         Es = self.Es_E_func(Ecir)
         lnrmax = self.lnr_Us_func(Es)
 
-        self.lnrcir_lnrmax_func = CubicSpline(lnrmax, lnrcir, extrapolate=True)
-        self.lnrmax_lnrcir_func = CubicSpline(lnrcir, lnrmax, extrapolate=True)
-        self.Es_lnrcir_func = CubicSpline(lnrcir, Es, extrapolate=True)
-        self.lnrcir_Es_func = CubicSpline(Es, lnrcir, extrapolate=True)
+        self.lnrcir_lnrmax_func = CubicSplineLinExt(lnrmax, lnrcir, extrapolate=True)
+        self.lnrmax_lnrcir_func = CubicSplineLinExt(lnrcir, lnrmax, extrapolate=True)
+        self.Es_lnrcir_func = CubicSplineLinExt(lnrcir, Es, extrapolate=True)
+        self.lnrcir_Es_func = CubicSplineLinExt(Es, lnrcir, extrapolate=True)
         return self
 
     def Ecir_lnr_func(self, lnr):
@@ -203,7 +245,7 @@ class interp_y_lnr:
         set_attrs(self, locals(), excl=['self'])
 
     def _init_interp(self):
-        self._lny_lnr_func = CubicSpline(self.lnr, self.lny, extrapolate=True)
+        self._lny_lnr_func = CubicSplineLinExt(self.lnr, self.lny, extrapolate=True)
 
     def __call__(self, lnr=None, r=None, E=None):
         "Return fn(lnr), fn(r), or fn(E) depending on kwargs"
@@ -374,16 +416,6 @@ def _truncate_radius(r, ρ, tol=10):
         return r  # unchanged
 
 
-# def _interp_y_E(E, y, tol=1e-10):
-#     ix = np.where(np.diff(E) > -tol * E[:-1])[0]
-#     if len(ix):
-#         i1, i2 = ix[0], ix[-1] + 1
-#     else:
-#         i1, i2 = 0, len(E)
-#     i3 = np.isfinite(y[i1:i2])  # XXX: careful!
-#     return CubicSpline(E[i1:i2][i3], y[i1:i2][i3], extrapolate=True)
-
-
 def _interp_y_E(E, y, U_min, tol=1e-10):
     ix = (E - U_min > -tol * U_min) & np.isfinite(y)
     return CubicSpline(E[ix], y[ix], extrapolate=True)
@@ -490,13 +522,13 @@ class IterSolver:
 
         # ---------------------------------------------
         set_attrs(self, locals(), excl=['self'])
-        stat = dict(U_lnr=U1_lnr, N_lnr=N1_lnr, f_lnr=f0_lnr,
+        stat = dict(U_lnr=U1_lnr, N_lnr=N1_lnr, f_lnr=f0_lnr, g_lnr=g0_lnr,
                     ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
                     U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
                     dU_E=CubicSpline(U1_lnr(lnr), lnr * 0),
                     dU_lnr=CubicSpline(lnr, lnr * 0),
                     )
-        self.stats = [stat]
+        self.stats = [obj_attrs(stat)]
 
     def new_potential(self, U2_lnr=None, fac_iter=1, mode='first', fac_rcir=0.8):
         """
@@ -512,28 +544,28 @@ class IterSolver:
 
         # ---------------------------------------------
         if U2_lnr is None:
-            U2_lnr = self.stats[-1]['U_lnr_new']
+            U2_lnr = self.stats[-1].U_lnr_new
 
         if mode == 'first':
-            U1_lnr = self.stats[0]['U_lnr'].prepare_Ecir()
-            N1_lnr = self.stats[0]['N_lnr']
+            U1_lnr = self.stats[0].U_lnr.prepare_Ecir()
+            N1_lnr = self.stats[0].N_lnr
             lnrcir = U1_lnr.lnrcir_lnrmax_func(lnr)  # in Ui
         elif mode == 'final':
-            U1_lnr = self.stats[0]['U_lnr']
-            N1_lnr = self.stats[0]['N_lnr']
-            Uf_lnr = self.stats[-1]['U_lnr'].prepare_Ecir()
-            # dU_lnr = self.stats[-1]['dU_lnr']
-            dU_E1 = self.stats[-1]['dU_E']
+            U1_lnr = self.stats[0].U_lnr
+            N1_lnr = self.stats[0].N_lnr
+            Uf_lnr = self.stats[-1].U_lnr.prepare_Ecir()
+            # dU_lnr = self.stats[-1].dU_lnr
+            dU_E1 = self.stats[-1].dU_E
             E1 = U1_lnr(lnr)
             # Ef = E1 + dU_lnr(lnr)
             Ef = E1 + dU_E1(E1)
             lnrcir = Uf_lnr.lnrcir_E_func(Ef)  # in Uf
         elif mode == 'first+final':
-            U1_lnr = self.stats[0]['U_lnr'].prepare_Ecir()
-            N1_lnr = self.stats[0]['N_lnr']
-            Uf_lnr = self.stats[-1]['U_lnr'].prepare_Ecir()
-            # dU_lnr = self.stats[-1]['dU_lnr']
-            dU_E1 = self.stats[-1]['dU_E']
+            U1_lnr = self.stats[0].U_lnr.prepare_Ecir()
+            N1_lnr = self.stats[0].N_lnr
+            Uf_lnr = self.stats[-1].U_lnr.prepare_Ecir()
+            # dU_lnr = self.stats[-1].dU_lnr
+            dU_E1 = self.stats[-1].dU_E
             E1 = U1_lnr(lnr)
             # Ef = E1 + dU_lnr(lnr)
             Ef = E1 + dU_E1(E1)
@@ -541,8 +573,8 @@ class IterSolver:
             lnrcirf = Uf_lnr.lnrcir_E_func(Ef) + np.log(1 - fac_rcir)
             lnrcir = np.logaddexp(lnrcir1, lnrcirf)
         elif mode == 'last':
-            U1_lnr = self.stats[-1]['U_lnr'].prepare_Ecir()
-            N1_lnr = self.stats[-1]['N_lnr']
+            U1_lnr = self.stats[-1].U_lnr.prepare_Ecir()
+            N1_lnr = self.stats[-1].N_lnr
             lnrcir = U1_lnr.lnrcir_lnrmax_func(lnr)
         else:
             raise ValueError
@@ -577,8 +609,8 @@ class IterSolver:
 
         # ---------------------------------------------
         # weighted update
-        ρ2_d = ρ2_lnr_d_.y * fac_iter + self.stats[-1]['ρ_d'] * (1 - fac_iter)
-        M2_d = M2_lnr_d_.y * fac_iter + self.stats[-1]['M_d'] * (1 - fac_iter)
+        ρ2_d = ρ2_lnr_d_.y * fac_iter + self.stats[-1].ρ_d * (1 - fac_iter)
+        M2_d = M2_lnr_d_.y * fac_iter + self.stats[-1].M_d * (1 - fac_iter)
 
         ρ2_lnr_d = interp_y_lnr(lnr, ρ2_d)
         M2_lnr_d = interp_y_lnr(lnr, M2_d)
@@ -586,20 +618,20 @@ class IterSolver:
         U3_lnr = compute_U(lnr, M2_lnr, quad, lnr_cen, lnr_min, lnr_max, G=self.G)
 
         # ---------------------------------------------
-        stat = dict(U_lnr=U2_lnr, N_lnr=N2_lnr, f_lnr=f2_lnr,
+        stat = dict(U_lnr=U2_lnr, N_lnr=N2_lnr, f_lnr=f2_lnr, g_lnr=g2_lnr,
                     ρ_lnr_d=ρ2_lnr_d, M_lnr_d=M2_lnr_d, ρ_d=ρ2_d, M_d=M2_d,
                     U_lnr_new=U3_lnr,  # Unew corresponds to M and ρ
                     dU_E=dU_E1,
                     # dU_lnr=dU_lnr,
                     )
-        self.stats.append(stat)
+        self.stats.append(obj_attrs(stat))
 
         return obj_attrs(locals(), excl=['self', 'ix'])
 
     def iter_solve(self, fac_iter=0.5, mode='first', fac_rcir=0.8, niter=50, rtol=1e-3, atol=0):
         for i in range(niter):
             res = self.new_potential(fac_iter=fac_iter, mode=mode, fac_rcir=fac_rcir)
-            is_ok = np.allclose(self.stats[-1]['M_d'], self.stats[-2]['M_d'], rtol=rtol, atol=atol)
+            is_ok = np.allclose(self.stats[-1].M_d, self.stats[-2].M_d, rtol=rtol, atol=atol)
             if is_ok:
                 print(f'Converged at {i}-th iteration!')
                 break
