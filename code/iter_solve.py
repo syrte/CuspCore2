@@ -335,7 +335,8 @@ def compute_N_var(lnr, f_lnr_old, U_lnr, dU_lnr, quad, lnr_min=None):
     integ = np.exp(xi)**3 * (U_lnr(lnr) - U_lnr(xi))**0.5 * f_lnr_old(E=E_old)
     N = 16 * 2**0.5 * np.pi**2 * (integ.clip(0) * wi).sum(0)
 
-    return interp_y_lnr(lnr, N, U_lnr=U_lnr)
+    ix = N > 0  # N=nan may happen when eta > 0
+    return interp_y_lnr(lnr[ix], N[ix], U_lnr=U_lnr)
 
 
 def compute_ρ(lnr, f_lnr, U_lnr, quad, lnr_max=None):
@@ -401,7 +402,7 @@ def compute_U(lnr, M_lnr, quad, lnr_cen=None, lnr_min=None, lnr_max=None, G=1):
     return interp_U_lnr(lnr, U=U[2:], U_min=U[0], G=G)
 
 
-def _truncate_radius(r, ρ, tol=10):
+def _truncate_radius(r, ρ, tol=10, ret_idx=True):
     "truncate the radius where density is too close to zero"
     ρ_min = ρ[ρ > 0].min() * tol
 
@@ -411,13 +412,17 @@ def _truncate_radius(r, ρ, tol=10):
 
     ix = np.where(ρ <= ρ_min)[0]
     if len(ix):
-        return r[:ix[0]]
+        idx = slice(None, ix[0], None)
     else:
-        return r  # unchanged
+        idx = slice(None, None, None)  # unchanged
+    if ret_idx:
+        return idx
+    else:
+        return r[idx]
 
 
 def _interp_y_E(E, y, U_min, tol=1e-10):
-    ix = (E - U_min > -tol * U_min) & np.isfinite(y)
+    ix = (E - U_min > -tol * U_min) & np.isfinite(y)   # XXX: careful
     return CubicSpline(E[ix], y[ix], extrapolate=True)
 
 
@@ -470,13 +475,6 @@ class IterSolver:
         r_ = rini
         x_ = pad3d(r_)
 
-        # truncate the grid inwards if the density drops to zero
-        ρ0_d = den0_d.density(x_)
-        r_ = _truncate_radius(r_, ρ0_d, tol=10)
-        x_ = pad3d(r_)
-        # rmax = r_[-1]  # XXX: careful! we'd better not update rmax
-        # assert rmax > r[-1], f"Please try a grid with smaller r[-1]<{rmax:.3e}"
-
         ρ0_d = den0_d.density(x_)
         M0_d = den0_d.enclosedMass(r_)
         U0 = pot0.potential(x_)
@@ -487,9 +485,12 @@ class IterSolver:
         U0_lnr = interp_U_lnr(lnr_, U0, U0_min, G=G)
         U1_lnr = interp_U_lnr(lnr_, U1, U1_min, G=G)
         dU_lnr = CubicSpline(lnr_, dU)  # need cover rmin for integrating N1
-        ρ0_U0_d = _interp_y_E(U0, ρ0_d, U0_min)  # need cover rmin for integrating f0
 
-        ρ0_lnr_d = interp_y_lnr(lnr_, ρ0_d)  # note den0_ext is not included
+        # truncate the grid inwards if the density drops to zero
+        ix = _truncate_radius(r_, ρ0_d, tol=10)  # XXX: careful
+        ρ0_U0_d = _interp_y_E(U0[ix], ρ0_d[ix], U0_min)  # need cover rmin for integrating f0
+
+        ρ0_lnr_d = interp_y_lnr(lnr_[ix], ρ0_d[ix])  # note den0_ext is not included
         M0_lnr_d = interp_y_lnr(lnr_, M0_d)  # note den0_ext is not included
 
         del r_, x_, lnr_, ρ0_d, M0_d, U0, U1, dU  # clean
@@ -505,6 +506,7 @@ class IterSolver:
         # ---------------------------------------------
         if True:
             # for self-consistency check
+            g1_lnr = compute_g(lnr, U1_lnr, quad, lnr_min)
             g0_lnr = compute_g(lnr, U0_lnr, quad, lnr_min)
             N0_lnr = make_N_lnr(f0_lnr, g0_lnr)
             ρ0_lnr_d_ = compute_ρ(lnr, f0_lnr, U0_lnr, quad, lnr_max)
