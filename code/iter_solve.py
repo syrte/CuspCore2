@@ -197,7 +197,7 @@ class interp_y_lnr:
         U_lnr:  interp_U_lnr instance, optional
             Potential.
         """
-        assert np.all(np.isfinite(y))
+        assert np.all(np.isfinite(y))  # XXX
         assert np.all(y > 0)
         lny = np.log(y)
         set_attrs(self, locals(), excl=['self'])
@@ -326,9 +326,10 @@ def compute_M_f(lnr, f_lnr, U_lnr, quad, lnr_min=None, lnr_max=None):
     return interp_y_lnr(lnr, M, U_lnr=U_lnr)
 
 
-def compute_M(lnr, ρ_lnr, quad, lnr_cen=None):
+def compute_M(lnr, ρ_lnr, quad, lnr_cen=None, lnr_min=None, ):
     lnr_cen = lnr[0] - np.log(1e6) if lnr_cen is None else lnr_cen
-    x = np.hstack([lnr_cen, lnr])
+    lnr_min = lnr[0] - np.log(1e3) if lnr_min is None else lnr_min
+    x = np.hstack([lnr_cen, lnr_min, lnr])
 
     xi = quad.x0.reshape(-1, 1) * (x[1:] - x[:-1]) + x[:-1]
     wi = quad.w0.reshape(-1, 1) * (x[1:] - x[:-1])
@@ -337,7 +338,7 @@ def compute_M(lnr, ρ_lnr, quad, lnr_cen=None):
     dM = 4 * np.pi * (integ.clip(0) * wi).sum(0)
     M = np.cumsum(dM) + 4 * np.pi / 3 * np.exp(lnr_cen)**3 * ρ_lnr(lnr_cen)
 
-    return interp_y_lnr(lnr, M, U_lnr=None)
+    return interp_y_lnr(lnr, M[1:], U_lnr=None)
 
 
 def compute_U(lnr, M_lnr, quad, lnr_cen=None, lnr_min=None, lnr_max=None, G=1):
@@ -373,14 +374,19 @@ def _truncate_radius(r, ρ, tol=10):
         return r  # unchanged
 
 
-def _interp_y_E(E, y, tol=1e-10):
-    ix = np.where(np.diff(E) > -tol * E[:-1])[0]
-    if len(ix):
-        i1, i2 = ix[0], ix[-1] + 1
-    else:
-        i1, i2 = 0, len(E)
-    i3 = np.isfinite(y[i1:i2])  # XXX: careful!
-    return CubicSpline(E[i1:i2][i3], y[i1:i2][i3], extrapolate=True)
+# def _interp_y_E(E, y, tol=1e-10):
+#     ix = np.where(np.diff(E) > -tol * E[:-1])[0]
+#     if len(ix):
+#         i1, i2 = ix[0], ix[-1] + 1
+#     else:
+#         i1, i2 = 0, len(E)
+#     i3 = np.isfinite(y[i1:i2])  # XXX: careful!
+#     return CubicSpline(E[i1:i2][i3], y[i1:i2][i3], extrapolate=True)
+
+
+def _interp_y_E(E, y, U_min, tol=1e-10):
+    ix = (E - U_min > -tol * U_min) & np.isfinite(y)
+    return CubicSpline(E[ix], y[ix], extrapolate=True)
 
 
 class IterSolver:
@@ -449,7 +455,7 @@ class IterSolver:
         U0_lnr = interp_U_lnr(lnr_, U0, U0_min, G=G)
         U1_lnr = interp_U_lnr(lnr_, U1, U1_min, G=G)
         dU_lnr = CubicSpline(lnr_, dU)  # need cover rmin for integrating N1
-        ρ0_U0_d = _interp_y_E(U0, ρ0_d)  # need cover rmin for integrating f0
+        ρ0_U0_d = _interp_y_E(U0, ρ0_d, U0_min)  # need cover rmin for integrating f0
 
         ρ0_lnr_d = interp_y_lnr(lnr_, ρ0_d)  # note den0_ext is not included
         M0_lnr_d = interp_y_lnr(lnr_, M0_d)  # note den0_ext is not included
@@ -470,7 +476,7 @@ class IterSolver:
             g0_lnr = compute_g(lnr, U0_lnr, quad, lnr_min)
             N0_lnr = make_N_lnr(f0_lnr, g0_lnr)
             ρ0_lnr_d_ = compute_ρ(lnr, f0_lnr, U0_lnr, quad, lnr_max)
-            M0_lnr_d_ = compute_M(lnr, ρ0_lnr_d_, quad, lnr_cen)
+            M0_lnr_d_ = compute_M(lnr, ρ0_lnr_d_, quad, lnr_cen, lnr_min)
             U0_lnr_d_ = compute_U(lnr, M0_lnr_d_, quad, lnr_cen, lnr_min, lnr_max, G=G)
             # M0_lnr_d_f = compute_M_f(lnr, f0_lnr, U0_lnr, quad, lnr_min, lnr_max)  # bug
 
@@ -484,7 +490,7 @@ class IterSolver:
 
         # ---------------------------------------------
         set_attrs(self, locals(), excl=['self'])
-        stat = dict(U_lnr=U1_lnr, N_lnr=N1_lnr,
+        stat = dict(U_lnr=U1_lnr, N_lnr=N1_lnr, f_lnr=f0_lnr,
                     ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
                     U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
                     dU_E=CubicSpline(U1_lnr(lnr), lnr * 0),
@@ -547,7 +553,7 @@ class IterSolver:
         with np.errstate(invalid='ignore'):
             lnr2 = U2_lnr.lnrmax_E_func(E2)  # supress the error with E2>0
 
-        dU_E1 = _interp_y_E(E1, dU)   # what's the problem?, E1 can be ?
+        dU_E1 = _interp_y_E(E1, dU, U1_lnr.U_min)   # what's the problem?, E1 can be ?
         dU_E1_der1 = dU_E1.derivative(1)(E1)
         # dU_lnr = CubicSpline(lnr, dU)
         # dU_E1_der1 = dU_lnr.derivative(1)(lnr) * U1_lnr.der1(lnr)
@@ -566,7 +572,7 @@ class IterSolver:
 
         # temporary
         ρ2_lnr_d_ = compute_ρ(lnr, f2_lnr, U2_lnr, quad, lnr_max)
-        M2_lnr_d_ = compute_M(lnr, ρ2_lnr_d_, quad, lnr_cen)
+        M2_lnr_d_ = compute_M(lnr, ρ2_lnr_d_, quad, lnr_cen, lnr_min)
         # M2_d_ = compute_M(lnr, f2_lnr, U2_lnr, quad, lnr_min, lnr_max).y # bug
 
         # ---------------------------------------------
@@ -580,7 +586,7 @@ class IterSolver:
         U3_lnr = compute_U(lnr, M2_lnr, quad, lnr_cen, lnr_min, lnr_max, G=self.G)
 
         # ---------------------------------------------
-        stat = dict(U_lnr=U2_lnr, N_lnr=N2_lnr,
+        stat = dict(U_lnr=U2_lnr, N_lnr=N2_lnr, f_lnr=f2_lnr,
                     ρ_lnr_d=ρ2_lnr_d, M_lnr_d=M2_lnr_d, ρ_d=ρ2_d, M_d=M2_d,
                     U_lnr_new=U3_lnr,  # Unew corresponds to M and ρ
                     dU_E=dU_E1,
