@@ -102,7 +102,7 @@ class interp_U_lnr:
         suggested by Agama.
         Us is varying from -inf to +inf.
         """
-        ix = U - U_min > -tol * U_min  # XXX: need to be more careful!
+        ix = (U - U_min > -tol * U_min)  # XXX: need to be more careful!
         lnr, U = lnr[ix], U[ix]
 
         Us = self.Es_E_func(U, U_min)
@@ -442,8 +442,8 @@ class IterSolver:
         ρ0_d = den0_d.density(x_)
         r_ = _truncate_radius(r_, ρ0_d, tol=10)
         x_ = pad3d(r_)
-        rmax = r_[-1]  # update rmax
-        assert rmax > r[-1], f"Please try a grid with smaller r[-1]<{rmax:.3e}"
+        # rmax = r_[-1]  # XXX: careful! we'd better not update rmax
+        # assert rmax > r[-1], f"Please try a grid with smaller r[-1]<{rmax:.3e}"
 
         ρ0_d = den0_d.density(x_)
         M0_d = den0_d.enclosedMass(r_)
