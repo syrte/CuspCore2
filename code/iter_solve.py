@@ -148,8 +148,8 @@ class interp_U_lnr:
         lnr, U = lnr[ix], U[ix]
 
         Us = self.Es_E_func(U, U_min)
-        Us_lnr_func = CubicSplineLinExt(lnr, Us, extrapolate=True)
-        lnr_Us_func = CubicSplineLinExt(Us, lnr, extrapolate=True)
+        Us_lnr_func = CubicSplineLinExt(lnr, Us, extrapolate='linear')
+        lnr_Us_func = CubicSplineLinExt(Us, lnr, extrapolate='linear')
         Us_lnr_der1 = Us_lnr_func.derivative(1)
 
         r = np.exp(lnr)
@@ -209,10 +209,10 @@ class interp_U_lnr:
         Es = self.Es_E_func(Ecir)
         lnrmax = self.lnr_Us_func(Es)
 
-        self.lnrcir_lnrmax_func = CubicSplineLinExt(lnrmax, lnrcir, extrapolate=True)
-        self.lnrmax_lnrcir_func = CubicSplineLinExt(lnrcir, lnrmax, extrapolate=True)
-        self.Es_lnrcir_func = CubicSplineLinExt(lnrcir, Es, extrapolate=True)
-        self.lnrcir_Es_func = CubicSplineLinExt(Es, lnrcir, extrapolate=True)
+        self.lnrcir_lnrmax_func = CubicSplineLinExt(lnrmax, lnrcir, extrapolate='linear')
+        self.lnrmax_lnrcir_func = CubicSplineLinExt(lnrcir, lnrmax, extrapolate='linear')
+        self.Es_lnrcir_func = CubicSplineLinExt(lnrcir, Es, extrapolate='linear')
+        self.lnrcir_Es_func = CubicSplineLinExt(Es, lnrcir, extrapolate='linear')
         return self
 
     def Ecir_lnr_func(self, lnr):
@@ -245,7 +245,7 @@ class interp_y_lnr:
         set_attrs(self, locals(), excl=['self'])
 
     def _init_interp(self):
-        self._lny_lnr_func = CubicSplineLinExt(self.lnr, self.lny, extrapolate=True)
+        self._lny_lnr_func = CubicSplineLinExt(self.lnr, self.lny, extrapolate='linear')
 
     def __call__(self, lnr=None, r=None, E=None):
         "Return fn(lnr), fn(r), or fn(E) depending on kwargs"
