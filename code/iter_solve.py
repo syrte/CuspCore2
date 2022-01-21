@@ -308,13 +308,11 @@ class make_N_lnr:
         return self.f_lnr(*args, **kwargs) * self.g_lnr(*args, **kwargs)
 
 
-def compute_f(lnr, U_lnr, ρ_U, quad, lnr_max=None):
+def compute_f_old(lnr, U_lnr, ρ_U, quad, lnr_max=None):
     """
     U_lnr, d2ρdU2_lnr: interp_y_lnr object
         U, d^2ρ/dU^2
     quad: GausQuad object
-    edge:
-        Margine level for integration.
     """
     lnr_max = lnr[-1] + np.log(1e3) if lnr_max is None else lnr_max
 
@@ -325,6 +323,22 @@ def compute_f(lnr, U_lnr, ρ_U, quad, lnr_max=None):
 
     integ = ((xi - lnr) / (Ui - U_lnr(lnr)))**0.5 * d2ρ_dU2 * U_lnr.der1(xi)
     f = 8**-0.5 * np.pi**-2 * (integ.clip(0) * wi).sum(0)
+    # ignore the boundary term, which is correct at least
+    # for any density profile with outer slope steeper than -1
+
+    return interp_y_lnr(lnr, f, U_lnr=U_lnr)
+
+
+def compute_f(lnr, U_lnr, d2ρdUdlnr_lnr, quad, lnr_max=None):
+    lnr_max = lnr[-1] + np.log(1e3) if lnr_max is None else lnr_max
+
+    xi = quad.x2.reshape(-1, 1) * (lnr_max - lnr) + lnr
+    wi = quad.w2.reshape(-1, 1) * (lnr_max - lnr)**0.5
+    d2ρ_dU2 = d2ρdUdlnr_lnr(xi)
+
+    integ = ((xi - lnr) / (U_lnr(xi) - U_lnr(lnr)))**0.5 * d2ρ_dU2
+    # XXX: should we clip integ with 0?
+    f = 8**-0.5 * np.pi**-2 * (integ * wi).sum(0)
     # ignore the boundary term, which is correct at least
     # for any density profile with outer slope steeper than -1
 
@@ -407,6 +421,7 @@ def compute_M(lnr, ρ_lnr, quad, lnr_cen=None, lnr_min=None):
 
     return interp_y_lnr(lnr, M[1:], U_lnr=None, extrapolate=('linear', 'const'))
     # we don't want mass to increase all the way, use const extrap on the right
+    # XXX: but it may break the continuity of U?
 
 
 def compute_U(lnr, M_lnr, quad, lnr_cen=None, lnr_min=None, lnr_max=None, G=1):
@@ -459,8 +474,8 @@ class compute_d2ρdUdlnr:
         M: *total* mass
         """
         ix = ρ > 0
-        lnr, ρ, M = lnr[ix], ρ[ix], M[ix]
-        lnρ_lnr = CubicSplineExtrap(lnr, np.log(ρ), extrapolate='linear')
+        # lnr, ρ, M = lnr[ix], ρ[ix], M[ix]
+        lnρ_lnr = CubicSplineExtrap(lnr[ix], np.log(ρ[ix]), extrapolate='linear')
         lnM_lnr = CubicSplineExtrap(lnr, np.log(M), extrapolate=('linear', 'const'))
         # we don't want mass to increase all the way, use const extrap on the right
 
@@ -545,7 +560,7 @@ class IterSolver:
         # truncate the grid inwards if the density drops to zero
         ix = _truncate_radius(r_, ρ0_d, tol=10)  # XXX: careful
         ρ0_U0_d = _interp_y_E(U0[ix], ρ0_d[ix], U0_min)  # need cover rmin for integrating f0
-        d2ρdUdlnr_lnr = compute_d2ρdUdlnr(lnr_, ρ0_d, M0, G)  # XXX: new
+        d2ρdUdlnr0_lnr = compute_d2ρdUdlnr(lnr_, ρ0_d, M0, G)  # XXX: new
 
         ρ0_lnr_d = interp_y_lnr(lnr_[ix], ρ0_d[ix])  # note den0_ext is not included
         M0_lnr_d = interp_y_lnr(lnr_, M0_d)  # note den0_ext is not included
@@ -557,7 +572,8 @@ class IterSolver:
         quad = GausQuad(nquad)
         lnr, lnr_min, lnr_max, lnr_cen = np.log(r), np.log(rmin), np.log(rmax), np.log(rcen)
 
-        f0_lnr = compute_f(lnr, U0_lnr, ρ0_U0_d, quad, lnr_max)
+        f0_lnr_old = compute_f_old(lnr, U0_lnr, ρ0_U0_d, quad, lnr_max)
+        f0_lnr = compute_f(lnr, U0_lnr, d2ρdUdlnr0_lnr, quad, lnr_max)
         N1_lnr = compute_N_var(lnr, f0_lnr, U1_lnr, dU_lnr, quad, lnr_min)
 
         # ---------------------------------------------
