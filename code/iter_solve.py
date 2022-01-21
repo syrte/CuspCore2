@@ -29,10 +29,12 @@ class obj_attrs:
         set_attrs(self, vars, excl=excl)
 
 
-class CubicSplineLinExt(CubicSpline):
+class CubicSplineExtrap(CubicSpline):
     def __init__(self, x, y, bc_type='not-a-knot', extrapolate='linear'):
         """
         Linearly extrapolate outside the range
+
+        extrapolate: False, 'linear', 'cubic'
 
         Example
         -------
@@ -41,7 +43,7 @@ class CubicSplineLinExt(CubicSpline):
         a = np.linspace(-1.5, 2, 100)
         y = np.sin(x * pi)
 
-        f0 = CubicSplineLinExt(x, y)
+        f0 = CubicSplineExtrap(x, y)
         f1 = CubicSpline(x, y)
         f2 = PchipInterpolator(x, y)
 
@@ -58,6 +60,7 @@ class CubicSplineLinExt(CubicSpline):
             plt.plot(a, f(a, nu=1) / np.pi, ls=['-', '--', ':'][i])
         plt.ylim(-2, 2)
         """
+        assert extrapolate in ['linear', 'cubic', False]
         if extrapolate == 'linear':
             super().__init__(x, y, bc_type=bc_type, extrapolate=True)
             x0, x1 = x[0], x[-1]
@@ -67,8 +70,10 @@ class CubicSplineLinExt(CubicSpline):
             c1 = np.array([[0, 0, d1, y1]]).T
             self.x = np.hstack([x0, self.x, x1])
             self.c = np.hstack([c0, self.c, c1])
+        elif extrapolate == 'cubic':
+            super().__init__(x, y, bc_type=bc_type, extrapolate=True)
         else:
-            super().__init__(x, y, bc_type=bc_type, extrapolate=extrapolate)
+            super().__init__(x, y, bc_type=bc_type, extrapolate=False)
 
 
 class GausQuad:
@@ -148,8 +153,8 @@ class interp_U_lnr:
         lnr, U = lnr[ix], U[ix]
 
         Us = self.Es_E_func(U, U_min)
-        Us_lnr_func = CubicSplineLinExt(lnr, Us, extrapolate='linear')
-        lnr_Us_func = CubicSplineLinExt(Us, lnr, extrapolate='linear')
+        Us_lnr_func = CubicSplineExtrap(lnr, Us, extrapolate='linear')
+        lnr_Us_func = CubicSplineExtrap(Us, lnr, extrapolate='linear')
         Us_lnr_der1 = Us_lnr_func.derivative(1)
 
         r = np.exp(lnr)
@@ -209,10 +214,10 @@ class interp_U_lnr:
         Es = self.Es_E_func(Ecir)
         lnrmax = self.lnr_Us_func(Es)
 
-        self.lnrcir_lnrmax_func = CubicSplineLinExt(lnrmax, lnrcir, extrapolate='linear')
-        self.lnrmax_lnrcir_func = CubicSplineLinExt(lnrcir, lnrmax, extrapolate='linear')
-        self.Es_lnrcir_func = CubicSplineLinExt(lnrcir, Es, extrapolate='linear')
-        self.lnrcir_Es_func = CubicSplineLinExt(Es, lnrcir, extrapolate='linear')
+        self.lnrcir_lnrmax_func = CubicSplineExtrap(lnrmax, lnrcir, extrapolate='linear')
+        self.lnrmax_lnrcir_func = CubicSplineExtrap(lnrcir, lnrmax, extrapolate='linear')
+        self.Es_lnrcir_func = CubicSplineExtrap(lnrcir, Es, extrapolate='linear')
+        self.lnrcir_Es_func = CubicSplineExtrap(Es, lnrcir, extrapolate='linear')
         return self
 
     def Ecir_lnr_func(self, lnr):
@@ -245,7 +250,7 @@ class interp_y_lnr:
         set_attrs(self, locals(), excl=['self'])
 
     def _init_interp(self):
-        self._lny_lnr_func = CubicSplineLinExt(self.lnr, self.lny, extrapolate='linear')
+        self._lny_lnr_func = CubicSplineExtrap(self.lnr, self.lny, extrapolate='linear')
 
     def __call__(self, lnr=None, r=None, E=None):
         "Return fn(lnr), fn(r), or fn(E) depending on kwargs"
