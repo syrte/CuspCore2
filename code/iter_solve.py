@@ -111,6 +111,41 @@ class GausQuad:
         set_attrs(self, locals(), excl=['self'])
 
 
+def extend_linspace(r, rmin, rmax):
+    """
+    extend given geomspace to cover [rmin, rmax].
+
+    Example
+    -------
+    r = np.linspace(-6, 1, 1001)
+    rmin, rmax = -8, 2
+    a = extend_linspace(r, rmin, rmax)
+    assert np.allclose(np.diff(a).mean(), np.diff(r).mean())
+    assert np.allclose((a), np.linspace(*(a[[0, -1]]), len(a)), rtol=1e-10, atol=1e-20)
+    assert a[0] - rmin <= 1e-10 and a[-1] - rmax >= -1e-10
+    """
+    dr = np.diff(r).mean()
+    a0 = np.arange(r[0] - dr, rmin - dr, -dr)[::-1]
+    a1 = np.arange(r[-1] + dr, rmax + dr, dr)
+    return np.hstack([a0, r, a1])
+
+
+def extend_geomspace(r, rmin, rmax):
+    """
+    extend given geomspace to cover [rmin, rmax].
+
+    Example
+    -------
+    r = np.geomspace(1e-6, 1e1, 1001)
+    rmin, rmax = 1e-8, 1e2
+    a = extend_geomspace(r, rmin, rmax)
+    assert np.allclose(np.diff(np.log(a)).mean(), np.diff(np.log(r)).mean())
+    assert np.allclose((a), np.geomspace(*(a[[0, -1]]), len(a)), rtol=1e-10, atol=1e-20)
+    assert a[0] - rmin <= 1e-10 and a[-1] - rmax >= -1e-10
+    """
+    return np.exp(extend_linspace(np.log(r), np.log(rmin), np.log(rmax)))
+
+
 def pad3d(x):
     return np.stack([x, x * 0, x * 0], axis=-1)
 
@@ -253,17 +288,25 @@ class interp_U_lnr:
 
 
 class interp_y_lnr:
-    def __init__(self, lnr, y, U_lnr=None, extrapolate='linear'):
+    def __init__(self, lnr, y, U_lnr=None, extrapolate='linear', clip=False):
         """
         Interpolator for N, g, f, d2ρ_dU2
 
         lnr, y:  array
             Using log(y) as cubic spline function of log(r).
         U_lnr:  interp_U_lnr instance, optional
-            Potential.
+            Potential, requred if want to call with energy.
+        clip:
+            Truncate lnr with y<=0. Should use it only with known y=0.
         """
-        assert np.all(np.isfinite(y))  # XXX
-        assert np.all(y > 0)
+        assert np.all(np.isfinite(y))  # any nan, inf?
+
+        if clip:
+            ix = y > 0
+            lnr, y = lnr[ix], y[ix]
+        else:
+            assert np.all(y > 0)
+
         lny = np.log(y)
         set_attrs(self, locals(), excl=['self'])
 
@@ -290,6 +333,11 @@ class interp_y_lnr:
             raise ValueError
 
 
+def _interp_y_E(E, y, U_min, tol=1e-10):
+    ix = (E - U_min > -tol * U_min) & np.isfinite(y)   # XXX: careful
+    return CubicSpline(E[ix], y[ix], extrapolate=True)
+
+
 class make_f_lnr:
     def __init__(self, N_lnr, g_lnr):
         self.N_lnr, self.g_lnr = N_lnr, g_lnr
@@ -310,6 +358,8 @@ class make_N_lnr:
 
 def compute_f_old(lnr, U_lnr, ρ_U, quad, lnr_max=None):
     """
+    Obsolete: ρ_U is not as stable as d2ρdUdlnr_lnr
+
     U_lnr, d2ρdU2_lnr: interp_y_lnr object
         U, d^2ρ/dU^2
     quad: GausQuad object
@@ -370,7 +420,8 @@ def compute_N_var(lnr, f_lnr_old, U_lnr, dU_lnr, quad, lnr_min=None):
     wi = quad.w0.reshape(-1, 1) * (lnr - lnr_min)
 
     E_old = U_lnr(lnr) - dU_lnr(xi)
-    # truncate E_old to the range of old potential
+
+    # truncate E_old to the range of old potential, important for deepened potentials (eta>0)
     E_min = (1 - np.finfo('f8').eps) * f_lnr_old.U_lnr.U_min
     E_max = -np.finfo('f8').tiny  # -2e-308
     E_old[(E_old <= E_min) | (E_old >= E_max)] = E_max  # set outliers with f(E) = 0
@@ -465,11 +516,6 @@ def _truncate_radius(r, ρ, tol=10, ret_idx=True):
         return r[idx]
 
 
-def _interp_y_E(E, y, U_min, tol=1e-10):
-    ix = (E - U_min > -tol * U_min) & np.isfinite(y)   # XXX: careful
-    return CubicSpline(E[ix], y[ix], extrapolate=True)
-
-
 class compute_d2ρdUdlnr:
     def __init__(self, lnr, ρ, M, G):
         """
@@ -477,8 +523,7 @@ class compute_d2ρdUdlnr:
         ρ: tracer density
         M: *total* mass
         """
-        ix = ρ > 0
-        # lnr, ρ, M = lnr[ix], ρ[ix], M[ix]
+        ix = ρ > 0  # truncate the grid inwards if the density drops to zero
         lnρ_lnr = CubicSplineExtrap(lnr[ix], np.log(ρ[ix]), extrapolate='linear')
         lnM_lnr = CubicSplineExtrap(lnr, np.log(M), extrapolate=('linear', 'const'))
         # we don't want mass to increase all the way, use const extrap on the right
@@ -498,13 +543,27 @@ class compute_d2ρdUdlnr:
         return d2ρdUdlnr
 
 
+def none_min(x, a):
+    if x is None:
+        return a
+    else:
+        return min(a, x)
+
+
+def none_max(x, a):
+    if x is None:
+        return a
+    else:
+        return max(a, x)
+
+
 class IterSolver:
     # Note: any changes of the constants must be made before calling IterSolver!
 
     def __init__(self, den0_d, den0_g, den1_g,
                  r=np.geomspace(1e-6, 1e2, 2000),
-                 rini=np.geomspace(1e-9, 1e4, 2000),
-                 rcen=1e-12, nquad=100, G=1):
+                 rlim=None,
+                 nquad=100, G=1):
         """
         Initial state:
             den0_d in pot0_d+pot0_g
@@ -513,7 +572,7 @@ class IterSolver:
         Final state:
             den2_d, to be solved iteratively
 
-        den0_d, pot0_g, pot1_g: agama.Potential
+        den0_d, den0_g, den1_g: agama.Density
             Inital density and exteral potentials.
             The code does not expect tracer density with slope greater than -2 in the center.
         r:  array
@@ -525,8 +584,18 @@ class IterSolver:
             should be smaller than rmin.
         """
         # intialize
-        rmin, rmax = rini[0], rini[-1]
-        rcen = min(rmin * 1e-2, rcen)
+        if rlim is None:
+            rcen, rmin, rmax = None, None, None
+        elif len(rlim) == 2:
+            rcen, rmin, rmax = [None, *rlim]
+        else:
+            rcen, rmin, rmax = rlim
+
+        # ---------------------------------------------
+        # prepare potentials
+        rmin = none_min(rmin, r[0] * 1e-2)
+        rcen = none_min(rcen, rmin * 1e-2)
+        rmax = none_min(rmax, r[-1] * 1e1)
 
         def make_pot(den, rmin, rmax):
             return agama.Potential(
@@ -543,31 +612,30 @@ class IterSolver:
 
         # ---------------------------------------------
         # prepare interplators
-        # we need a table covering rmin to rmax rather than r
-        r_ = rini
+        # we need a table covering rmin to rmax
+        r_ = extend_geomspace(r, rmin, rmax)
         x_ = pad3d(r_)
 
         ρ0_d = den0_d.density(x_)
         M0_d = den0_d.enclosedMass(r_)
-        M0 = den0_d.enclosedMass(r_) + den0_g.enclosedMass(r_)
+        M0 = den0_d.enclosedMass(r_) + den0_g.enclosedMass(r_)  # total mass
         U0 = pot0.potential(x_)
         U1 = pot1.potential(x_)
         dU = U1 - U0
 
         lnr_ = np.log(r_)
-        # ρ0_lnr_d = interp_y_lnr(lnr_, ρ0_d)
-        # M0_lnr = interp_y_lnr(lnr_, M0)
         U0_lnr = interp_U_lnr(lnr_, U0, U0_min, G=G)
         U1_lnr = interp_U_lnr(lnr_, U1, U1_min, G=G)
         dU_lnr = CubicSpline(lnr_, dU)  # need cover rmin for integrating N1
+        d2ρdUdlnr0_lnr = compute_d2ρdUdlnr(lnr_, ρ0_d, M0, G)
 
-        # truncate the grid inwards if the density drops to zero
-        ix = _truncate_radius(r_, ρ0_d, tol=10)  # XXX: careful
-        ρ0_U0_d = _interp_y_E(U0[ix], ρ0_d[ix], U0_min)  # need cover rmin for integrating f0
-        d2ρdUdlnr0_lnr = compute_d2ρdUdlnr(lnr_, ρ0_d, M0, G)  # XXX: new
+        ρ0_lnr_d = interp_y_lnr(lnr_, ρ0_d, clip=True)  # tracer density
+        M0_lnr_d = interp_y_lnr(lnr_, M0_d)
 
-        ρ0_lnr_d = interp_y_lnr(lnr_[ix], ρ0_d[ix])  # note den0_ext is not included
-        M0_lnr_d = interp_y_lnr(lnr_, M0_d)  # note den0_ext is not included
+        # obsolete
+        # ix = _truncate_radius(r_, ρ0_d, tol=10)  # XXX: careful
+        # ρ0_U0_d = _interp_y_E(U0[ix], ρ0_d[ix], U0_min)  # need cover rmin for integrating f0
+        # f0_lnr_old = compute_f_old(lnr, U0_lnr, ρ0_U0_d, quad, lnr_max)
 
         del r_, x_, lnr_, ρ0_d, M0_d, U0, U1, dU  # clean
 
@@ -576,7 +644,6 @@ class IterSolver:
         quad = GausQuad(nquad)
         lnr, lnr_min, lnr_max, lnr_cen = np.log(r), np.log(rmin), np.log(rmax), np.log(rcen)
 
-        f0_lnr_old = compute_f_old(lnr, U0_lnr, ρ0_U0_d, quad, lnr_max)
         f0_lnr = compute_f(lnr, U0_lnr, d2ρdUdlnr0_lnr, quad, lnr_max)
         N1_lnr = compute_N_var(lnr, f0_lnr, U1_lnr, dU_lnr, quad, lnr_min)
 
@@ -605,7 +672,7 @@ class IterSolver:
                     ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
                     U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
                     dU_E=CubicSpline(U1_lnr(lnr), lnr * 0),
-                    dU_lnr=CubicSpline(lnr, lnr * 0),
+                    # dU_lnr=CubicSpline(lnr, lnr * 0),
                     )
         self.stats = [obj_attrs(stat)]
 
@@ -664,7 +731,7 @@ class IterSolver:
         with np.errstate(invalid='ignore'):
             lnr2 = U2_lnr.lnrmax_E_func(E2)  # supress the error with E2>0
 
-        dU_E1 = _interp_y_E(E1, dU, U1_lnr.U_min)   # what's the problem?, E1 can be ?
+        dU_E1 = _interp_y_E(E1, dU, U1_lnr.U_min)   # XXX: what's the problem?, E1 can be ?
         dU_E1_der1 = dU_E1.derivative(1)(E1)
         # dU_lnr = CubicSpline(lnr, dU)
         # dU_E1_der1 = dU_lnr.derivative(1)(lnr) * U1_lnr.der1(lnr)
@@ -712,8 +779,8 @@ class IterSolver:
             res = self.new_potential(fac_iter=fac_iter, mode=mode, fac_rcir=fac_rcir)
             is_ok = np.allclose(self.stats[-1].M_d, self.stats[-2].M_d, rtol=rtol, atol=atol)
             if is_ok:
-                print(f'Converged at {i}-th iteration!')
+                print(f'Model "{mode}": Converged at {i+1}-th iteration! ')
                 break
         else:
-            print(f'Warning: not converged within {niter} iterations!')
+            print(f'Model "{mode}": Not converged within {niter} iterations!')
         return res
