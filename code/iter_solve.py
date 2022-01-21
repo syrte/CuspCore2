@@ -34,7 +34,7 @@ class CubicSplineExtrap(CubicSpline):
         """
         Linearly extrapolate outside the range
 
-        extrapolate: False, 'linear', 'cubic'
+        extrapolate: False, float, 'const', 'linear', 'cubic', or a 2-tuple of them
 
         Example
         -------
@@ -43,7 +43,7 @@ class CubicSplineExtrap(CubicSpline):
         a = np.linspace(-1.5, 2, 100)
         y = np.sin(x * pi)
 
-        f0 = CubicSplineExtrap(x, y)
+        f0 = CubicSplineExtrap(x, y, extrapolate=('linear', 'const'))
         f1 = CubicSpline(x, y)
         f2 = PchipInterpolator(x, y)
 
@@ -60,20 +60,38 @@ class CubicSplineExtrap(CubicSpline):
             plt.plot(a, f(a, nu=1) / np.pi, ls=['-', '--', ':'][i])
         plt.ylim(-2, 2)
         """
-        assert extrapolate in ['linear', 'cubic', False]
-        if extrapolate == 'linear':
-            super().__init__(x, y, bc_type=bc_type, extrapolate=True)
-            x0, x1 = x[0], x[-1]
-            y0, y1 = y[0], y[-1]
-            d0, d1 = self([x0, x1], nu=1)
-            c0 = np.array([[0, 0, d0, y0]]).T
-            c1 = np.array([[0, 0, d1, y1]]).T
-            self.x = np.hstack([x0, self.x, x1])
-            self.c = np.hstack([c0, self.c, c1])
-        elif extrapolate == 'cubic':
-            super().__init__(x, y, bc_type=bc_type, extrapolate=True)
-        else:
+        if extrapolate is False:
             super().__init__(x, y, bc_type=bc_type, extrapolate=False)
+        else:
+            super().__init__(x, y, bc_type=bc_type, extrapolate=True)
+
+            if np.isscalar(extrapolate):
+                extrapolate = (extrapolate, extrapolate)
+
+            xs, cs = [self.x], [self.c]
+            for i, ext in enumerate(extrapolate[:2]):
+                if i == 0:
+                    xi, yi = x[0], y[0]
+                else:
+                    xi, yi = x[-1], y[-1]
+
+                if ext == 'cubic':
+                    continue
+                elif ext == 'linear':
+                    di = self(xi, nu=1)  # derivative at xi
+                    ci = np.array([[0, 0, di, yi]]).T
+                elif ext == 'const':
+                    ci = np.array([[0, 0, 0, yi]]).T
+                else:
+                    ci = np.array([[0, 0, 0, float(ext)]]).T
+
+                if i == 0:
+                    xs, cs = [xi, *xs], [ci, *cs]
+                else:
+                    xs, cs = [*xs, xi], [*cs, ci]
+
+            if len(xs) > 1:
+                self.x, self.c = np.hstack(xs), np.hstack(cs)
 
 
 class GausQuad:
@@ -431,6 +449,32 @@ def _interp_y_E(E, y, U_min, tol=1e-10):
     return CubicSpline(E[ix], y[ix], extrapolate=True)
 
 
+class compute_d2ρdUdlnr:
+    def __init__(self, lnr, ρ, M, G):
+        """
+        d^2ρ/dU^2 * dU/dlnr
+        ρ: tracer density
+        M: *total* mass
+        """
+        ix = ρ > 0
+        lnr, ρ, M = lnr[ix], ρ[ix], M[ix]
+        lnρ_lnr = CubicSplineExtrap(lnr, np.log(ρ), extrapolate='linear')
+        lnM_lnr = CubicSplineExtrap(lnr, np.log(M), extrapolate='linear')
+        set_attrs(self, locals(), excl=['self', 'ix'])
+
+    def __call__(self, lnr):
+        G = self.G
+        r = np.exp(lnr)
+        M = np.exp(self.lnM_lnr(lnr))
+        ρ = np.exp(self.lnρ_lnr(lnr))
+        lnρ_der1 = self.lnρ_lnr(lnr, nu=1)  # dlnρ/dlnr
+        lnρ_der2 = self.lnρ_lnr(lnr, nu=2)  # d^2lnρ/dlnr^2
+        lnM_der1 = self.lnM_lnr(lnr, nu=1)  # dlnM/dlnr
+
+        d2ρdUdlnr = (r * ρ) / (G * M) * (lnρ_der2 + lnρ_der1 * (1 + lnρ_der1 - lnM_der1))
+        return d2ρdUdlnr
+
+
 class IterSolver:
     # Note: any changes of the constants must be made before calling IterSolver!
 
@@ -482,11 +526,14 @@ class IterSolver:
 
         ρ0_d = den0_d.density(x_)
         M0_d = den0_d.enclosedMass(r_)
+        M0 = den0_d.enclosedMass(r_) + den0_g.enclosedMass(r_)
         U0 = pot0.potential(x_)
         U1 = pot1.potential(x_)
         dU = U1 - U0
 
         lnr_ = np.log(r_)
+        # ρ0_lnr_d = interp_y_lnr(lnr_, ρ0_d)
+        # M0_lnr = interp_y_lnr(lnr_, M0)
         U0_lnr = interp_U_lnr(lnr_, U0, U0_min, G=G)
         U1_lnr = interp_U_lnr(lnr_, U1, U1_min, G=G)
         dU_lnr = CubicSpline(lnr_, dU)  # need cover rmin for integrating N1
@@ -494,6 +541,7 @@ class IterSolver:
         # truncate the grid inwards if the density drops to zero
         ix = _truncate_radius(r_, ρ0_d, tol=10)  # XXX: careful
         ρ0_U0_d = _interp_y_E(U0[ix], ρ0_d[ix], U0_min)  # need cover rmin for integrating f0
+        d2ρdUdlnr_lnr = compute_d2ρdUdlnr(lnr_, ρ0_d, M0, G)  # XXX: new
 
         ρ0_lnr_d = interp_y_lnr(lnr_[ix], ρ0_d[ix])  # note den0_ext is not included
         M0_lnr_d = interp_y_lnr(lnr_, M0_d)  # note den0_ext is not included
