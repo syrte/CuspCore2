@@ -253,7 +253,7 @@ class interp_U_lnr:
 
 
 class interp_y_lnr:
-    def __init__(self, lnr, y, U_lnr=None):
+    def __init__(self, lnr, y, U_lnr=None, extrapolate='linear'):
         """
         Interpolator for N, g, f, d2ρ_dU2
 
@@ -268,7 +268,8 @@ class interp_y_lnr:
         set_attrs(self, locals(), excl=['self'])
 
     def _init_interp(self):
-        self._lny_lnr_func = CubicSplineExtrap(self.lnr, self.lny, extrapolate='linear')
+        self._lny_lnr_func = CubicSplineExtrap(
+            self.lnr, self.lny, extrapolate=self.extrapolate)
 
     def __call__(self, lnr=None, r=None, E=None):
         "Return fn(lnr), fn(r), or fn(E) depending on kwargs"
@@ -389,10 +390,10 @@ def compute_M_f(lnr, f_lnr, U_lnr, quad, lnr_min=None, lnr_max=None):
     integ = np.exp(xi)**3 * f_lnr(tj) * (U_lnr(tj) - U_lnr(xi))**0.5 * U_lnr.der1(tj)
     M = 16 * 2**0.5 * np.pi**2 * (integ.clip(0) * wi).reshape(-1, len(lnr)).sum(0)
 
-    return interp_y_lnr(lnr, M, U_lnr=U_lnr)
+    return interp_y_lnr(lnr, M, U_lnr=U_lnr, extrapolate=('linear', 'const'))
 
 
-def compute_M(lnr, ρ_lnr, quad, lnr_cen=None, lnr_min=None, ):
+def compute_M(lnr, ρ_lnr, quad, lnr_cen=None, lnr_min=None):
     lnr_cen = lnr[0] - np.log(1e6) if lnr_cen is None else lnr_cen
     lnr_min = lnr[0] - np.log(1e3) if lnr_min is None else lnr_min
     x = np.hstack([lnr_cen, lnr_min, lnr])
@@ -404,7 +405,8 @@ def compute_M(lnr, ρ_lnr, quad, lnr_cen=None, lnr_min=None, ):
     dM = 4 * np.pi * (integ.clip(0) * wi).sum(0)
     M = np.cumsum(dM) + 4 * np.pi / 3 * np.exp(lnr_cen)**3 * ρ_lnr(lnr_cen)
 
-    return interp_y_lnr(lnr, M[1:], U_lnr=None)
+    return interp_y_lnr(lnr, M[1:], U_lnr=None, extrapolate=('linear', 'const'))
+    # we don't want mass to increase all the way, use const extrap on the right
 
 
 def compute_U(lnr, M_lnr, quad, lnr_cen=None, lnr_min=None, lnr_max=None, G=1):
@@ -459,7 +461,9 @@ class compute_d2ρdUdlnr:
         ix = ρ > 0
         lnr, ρ, M = lnr[ix], ρ[ix], M[ix]
         lnρ_lnr = CubicSplineExtrap(lnr, np.log(ρ), extrapolate='linear')
-        lnM_lnr = CubicSplineExtrap(lnr, np.log(M), extrapolate='linear')
+        lnM_lnr = CubicSplineExtrap(lnr, np.log(M), extrapolate=('linear', 'const'))
+        # we don't want mass to increase all the way, use const extrap on the right
+
         set_attrs(self, locals(), excl=['self', 'ix'])
 
     def __call__(self, lnr):
@@ -591,7 +595,7 @@ class IterSolver:
             agama.Potential
             potential function
             array of potential values at r
-        mode: 'first', 'final', 'first+final', 'last', 
+        mode: 'first', 'last', 'first+last', 'iter', 
         """
         r, lnr = self.r, self.lnr
         lnr_min, lnr_max, lnr_cen = self.lnr_min, self.lnr_max, self.lnr_cen
@@ -605,7 +609,7 @@ class IterSolver:
             U1_lnr = self.stats[0].U_lnr.prepare_Ecir()
             N1_lnr = self.stats[0].N_lnr
             lnrcir = U1_lnr.lnrcir_lnrmax_func(lnr)  # in Ui
-        elif mode == 'final':
+        elif mode == 'last':
             U1_lnr = self.stats[0].U_lnr
             N1_lnr = self.stats[0].N_lnr
             Uf_lnr = self.stats[-1].U_lnr.prepare_Ecir()
@@ -615,7 +619,7 @@ class IterSolver:
             # Ef = E1 + dU_lnr(lnr)
             Ef = E1 + dU_E1(E1)
             lnrcir = Uf_lnr.lnrcir_E_func(Ef)  # in Uf
-        elif mode == 'first+final':
+        elif mode == 'first+last':
             U1_lnr = self.stats[0].U_lnr.prepare_Ecir()
             N1_lnr = self.stats[0].N_lnr
             Uf_lnr = self.stats[-1].U_lnr.prepare_Ecir()
@@ -627,7 +631,7 @@ class IterSolver:
             lnrcir1 = U1_lnr.lnrcir_E_func(E1) + np.log(fac_rcir)
             lnrcirf = Uf_lnr.lnrcir_E_func(Ef) + np.log(1 - fac_rcir)
             lnrcir = np.logaddexp(lnrcir1, lnrcirf)
-        elif mode == 'last':
+        elif mode == 'iter':
             U1_lnr = self.stats[-1].U_lnr.prepare_Ecir()
             N1_lnr = self.stats[-1].N_lnr
             lnrcir = U1_lnr.lnrcir_lnrmax_func(lnr)
