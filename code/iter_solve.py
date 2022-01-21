@@ -370,11 +370,15 @@ def compute_N_var(lnr, f_lnr_old, U_lnr, dU_lnr, quad, lnr_min=None):
     wi = quad.w0.reshape(-1, 1) * (lnr - lnr_min)
 
     E_old = U_lnr(lnr) - dU_lnr(xi)
+    # truncate E_old to the range of old potential
+    E_min = (1 - np.finfo('f8').eps) * f_lnr_old.U_lnr.U_min
+    E_max = -np.finfo('f8').tiny  # -2e-308
+    E_old[(E_old <= E_min) | (E_old >= E_max)] = E_max  # set outliers with f(E) = 0
+
     integ = np.exp(xi)**3 * (U_lnr(lnr) - U_lnr(xi))**0.5 * f_lnr_old(E=E_old)
     N = 16 * 2**0.5 * np.pi**2 * (integ.clip(0) * wi).sum(0)
 
-    ix = N > 0  # N=nan may happen when eta > 0
-    return interp_y_lnr(lnr[ix], N[ix], U_lnr=U_lnr)
+    return interp_y_lnr(lnr, N, U_lnr=U_lnr)
 
 
 def compute_ρ(lnr, f_lnr, U_lnr, quad, lnr_max=None):
