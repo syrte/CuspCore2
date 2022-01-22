@@ -96,7 +96,7 @@ class CubicSplineExtrap(CubicSpline):
 
 def extend_linspace(r, rmin, rmax):
     """
-    extend given geomspace to cover [rmin, rmax].
+    extend given linspace to cover [rmin, rmax].
 
     Example
     -------
@@ -157,6 +157,7 @@ def zhao_prof(M=1.0, R=None, rs=1, inner=1.0, outer=3.5, eta=0.5, rt=np.inf,
             outerCutoffRadius=rt, cutoffStrength=2,
         )
         den = agama.Density(**param)
+
         if R is None or M == 0:
             break
         else:
@@ -748,7 +749,7 @@ class IterSolver:
 
         ix = lnr2 < lnr_max  # might get nan
         if True:
-            assert np.all(np.diff(lnr2[ix]) > 0)
+            assert np.all(np.diff(lnr2[ix]) > 0)  # XXX: why sometimes fail?
         N2_lnr = interp_y_lnr(lnr2[ix], N2[ix], U_lnr=U2_lnr)
 
         g2_lnr = compute_g(lnr, U2_lnr, quad, lnr_min)
