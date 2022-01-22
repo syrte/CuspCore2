@@ -94,23 +94,6 @@ class CubicSplineExtrap(CubicSpline):
                 self.x, self.c = np.hstack(xs), np.hstack(cs)
 
 
-class GausQuad:
-    def __init__(self, n):
-        """Prepare tables for Gauss–Jacobi quadrature grid
-        """
-        x0, w0 = roots_legendre(n)  # ∫ f(x) dx
-        x1, w1 = roots_jacobi(n, -0.5, 0)  # ∫ f(x) / sqrt(a - x) dx
-        x2, w2 = roots_jacobi(n, 0, -0.5)  # ∫ f(x) / sqrt(x - a) dx
-        x3, w3 = roots_jacobi(n, +0.5, 0)  # ∫ f(x) * sqrt(a - x) dx
-        x4, w4 = roots_jacobi(n, 0, +0.5)  # ∫ f(x) * sqrt(x - a) dx
-        x0, w0 = x0 * 0.5 + 0.5, w0 * 0.5
-        x1, w1 = x1 * 0.5 + 0.5, w1 * 0.5**0.5
-        x2, w2 = x2 * 0.5 + 0.5, w2 * 0.5**0.5
-        x3, w3 = x3 * 0.5 + 0.5, w3 * 0.5**1.5
-        x4, w4 = x4 * 0.5 + 0.5, w4 * 0.5**1.5
-        set_attrs(self, locals(), excl=['self'])
-
-
 def extend_linspace(r, rmin, rmax):
     """
     extend given geomspace to cover [rmin, rmax].
@@ -151,6 +134,12 @@ def pad3d(x):
 
 
 def enclosedMass(pot, r):
+    """
+    equiv to pot.enclosedMass(pad3d(r))
+
+    pot: agama.Potential
+    r: float or array
+    """
     return -pot.force(pad3d(r)).T[0] * r**2
 
 
@@ -354,6 +343,23 @@ class make_N_lnr:
     def __call__(self, *args, **kwargs):
         "Return N(lnr), N(r), or N(E) depending on kwargs"
         return self.f_lnr(*args, **kwargs) * self.g_lnr(*args, **kwargs)
+
+
+class GausQuad:
+    def __init__(self, n):
+        """Prepare tables for Gauss–Jacobi quadrature grid
+        """
+        x0, w0 = roots_legendre(n)  # ∫ f(x) dx
+        x1, w1 = roots_jacobi(n, -0.5, 0)  # ∫ f(x) / sqrt(a - x) dx
+        x2, w2 = roots_jacobi(n, 0, -0.5)  # ∫ f(x) / sqrt(x - a) dx
+        x3, w3 = roots_jacobi(n, +0.5, 0)  # ∫ f(x) * sqrt(a - x) dx
+        x4, w4 = roots_jacobi(n, 0, +0.5)  # ∫ f(x) * sqrt(x - a) dx
+        x0, w0 = x0 * 0.5 + 0.5, w0 * 0.5
+        x1, w1 = x1 * 0.5 + 0.5, w1 * 0.5**0.5
+        x2, w2 = x2 * 0.5 + 0.5, w2 * 0.5**0.5
+        x3, w3 = x3 * 0.5 + 0.5, w3 * 0.5**1.5
+        x4, w4 = x4 * 0.5 + 0.5, w4 * 0.5**1.5
+        set_attrs(self, locals(), excl=['self'])
 
 
 def compute_f_old(lnr, U_lnr, ρ_U, quad, lnr_max=None):
