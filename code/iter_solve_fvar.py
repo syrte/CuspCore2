@@ -288,11 +288,6 @@ class interp_y_lnr:
             raise ValueError
 
 
-def _interp_y_E(E, y, U_min, tol=1e-10):
-    ix = (E - U_min > -tol * U_min) & np.isfinite(y)   # XXX: careful
-    return CubicSpline(E[ix], y[ix], extrapolate=True)
-
-
 class make_f_lnr:
     def __init__(self, N_lnr, g_lnr, U_lnr=None):
         set_attrs(self, locals(), excl=['self'])
@@ -326,30 +321,6 @@ class GausQuad:
         x3, w3 = x3 * 0.5 + 0.5, w3 * 0.5**1.5
         x4, w4 = x4 * 0.5 + 0.5, w4 * 0.5**1.5
         set_attrs(self, locals(), excl=['self'])
-
-
-# obsolete
-def compute_f_old(lnr, U_lnr, ρ_U, quad, lnr_max=None):
-    """
-    Obsolete: ρ_U is not as stable as d2ρdUdlnr_lnr
-
-    U_lnr, d2ρdU2_lnr: interp_y_lnr object
-        U, d^2ρ/dU^2
-    quad: GausQuad object
-    """
-    lnr_max = lnr[-1] + np.log(1e3) if lnr_max is None else lnr_max
-
-    xi = quad.x2.reshape(-1, 1) * (lnr_max - lnr) + lnr
-    wi = quad.w2.reshape(-1, 1) * (lnr_max - lnr)**0.5
-    Ui = U_lnr(xi)
-    d2ρ_dU2 = ρ_U.derivative(2)(Ui)
-
-    integ = ((xi - lnr) / (Ui - U_lnr(lnr)))**0.5 * d2ρ_dU2 * U_lnr.der1(xi)
-    f = 8**-0.5 * np.pi**-2 * (integ.clip(0) * wi).sum(0)
-    # ignore the boundary term, which is correct at least
-    # for any density profile with outer slope steeper than -1
-
-    return interp_y_lnr(lnr, f, U_lnr=U_lnr)
 
 
 def compute_f(lnr, U_lnr, d2ρdUdlnr_lnr, quad, lnr_max=None):
@@ -469,26 +440,6 @@ def compute_U(lnr, M_lnr, quad, lnr_cen=None, lnr_min=None, lnr_max=None, G=1):
     # to ensure U(rmax) = - G * M(rmax) / rmax
 
     return interp_U_lnr(lnr, U=U[2:], U_min=U[0], G=G)
-
-
-# obsolete
-def _truncate_radius(r, ρ, tol=10, ret_idx=True):
-    "truncate the radius where density is too close to zero"
-    ρ_min = ρ[ρ > 0].min() * tol
-
-    if ρ[0] <= ρ_min:
-        # XXX: possible when rmax is not large enough
-        raise ValueError('Unexpected: Found zero density (hole) at center!')
-
-    ix = np.where(ρ <= ρ_min)[0]
-    if len(ix):
-        idx = slice(None, ix[0], None)
-    else:
-        idx = slice(None, None, None)  # unchanged
-    if ret_idx:
-        return idx
-    else:
-        return r[idx]
 
 
 class compute_d2ρdUdlnr:
