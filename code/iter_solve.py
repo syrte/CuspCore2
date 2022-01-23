@@ -168,7 +168,7 @@ def zhao_prof(M=1.0, R=None, rs=1, inner=1.0, outer=3.5, eta=0.5, rt=np.inf,
             type='Multipole', density=den,
             rmin=rmin, rmax=rmax, gridSizeR=ngrid, lmax=0, symmetry="s"
         )
-        return pot, param
+        return den, pot, param
     else:
         return den, param
 
@@ -414,11 +414,11 @@ def compute_g(lnr, U_lnr, quad, lnr_min=None):
     return interp_y_lnr(lnr, g, U_lnr=U_lnr)
 
 
-def compute_N_var(lnr, f_lnr_old, U_lnr, dU_lnr, quad, lnr_min=None):
+def compute_N_var(lnr, f_lnr_old, U_lnr_old, U_lnr, quad, lnr_min=None):
     """
-    f_lnr_old: 
+    f_lnr_old, U_lnr_old: 
         function in old potential
-    U_lnr, du_lnr: 
+    U_lnr:
         function in new potential
     """
     lnr_min = lnr[0] - np.log(1e3) if lnr_min is None else lnr_min
@@ -426,10 +426,10 @@ def compute_N_var(lnr, f_lnr_old, U_lnr, dU_lnr, quad, lnr_min=None):
     xi = quad.x0.reshape(-1, 1) * (lnr - lnr_min) + lnr_min
     wi = quad.w0.reshape(-1, 1) * (lnr - lnr_min)
 
-    E_old = U_lnr(lnr) - dU_lnr(xi)
+    E_old = U_lnr(lnr) + (U_lnr_old(xi) - U_lnr(xi))
 
     # truncate E_old to the range of old potential, important for deepened potentials (eta>0)
-    E_min = (1 - np.finfo('f8').eps) * f_lnr_old.U_lnr.U_min
+    E_min = (1 - np.finfo('f8').eps) * f_lnr_old.U_lnr.U_min  # 1-2e-16
     E_max = -np.finfo('f8').tiny  # -2e-308
     E_old[(E_old <= E_min) | (E_old >= E_max)] = E_max  # set outliers with f(E) = 0
 
@@ -652,7 +652,7 @@ class IterSolver:
         lnr, lnr_min, lnr_max, lnr_cen = np.log(r), np.log(rmin), np.log(rmax), np.log(rcen)
 
         f0_lnr = compute_f(lnr, U0_lnr, d2ρdUdlnr0_lnr, quad, lnr_max)
-        N1_lnr = compute_N_var(lnr, f0_lnr, U1_lnr, dU_lnr, quad, lnr_min)
+        N1_lnr = compute_N_var(lnr, f0_lnr, U0_lnr, U1_lnr, quad, lnr_min)
 
         # ---------------------------------------------
         if True:
