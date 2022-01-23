@@ -329,8 +329,8 @@ def _interp_y_E(E, y, U_min, tol=1e-10):
 
 
 class make_f_lnr:
-    def __init__(self, N_lnr, g_lnr):
-        self.N_lnr, self.g_lnr = N_lnr, g_lnr
+    def __init__(self, N_lnr, g_lnr, U_lnr=None):
+        set_attrs(self, locals(), excl=['self'])
 
     def __call__(self, *args, **kwargs):
         "Return f(lnr), f(r), or f(E) depending on kwargs"
@@ -653,6 +653,8 @@ class IterSolver:
 
         f0_lnr = compute_f(lnr, U0_lnr, d2ρdUdlnr0_lnr, quad, lnr_max)
         N1_lnr = compute_N_var(lnr, f0_lnr, U0_lnr, U1_lnr, quad, lnr_min)
+        g1_lnr = compute_g(lnr, U1_lnr, quad, lnr_min)
+        f1_lnr = make_f_lnr(N1_lnr, g1_lnr, U1_lnr)
 
         # ---------------------------------------------
         if True:
@@ -675,15 +677,13 @@ class IterSolver:
 
         # ---------------------------------------------
         set_attrs(self, locals(), excl=['self'])
-        stat = dict(U_lnr=U1_lnr, N_lnr=N1_lnr, f_lnr=f0_lnr, g_lnr=g0_lnr,
+        stat = dict(U_lnr=U1_lnr, N_lnr=N1_lnr, f_lnr=f1_lnr, g_lnr=g1_lnr,
                     ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
                     U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
-                    dU_E=CubicSpline(U1_lnr(lnr), lnr * 0),
-                    # dU_lnr=CubicSpline(lnr, lnr * 0),
                     )
         self.stats = [obj_attrs(stat)]
 
-    def new_potential(self, U2_lnr=None, fac_iter=1, mode='first', fac_rcir=0.8):
+    def new_potential(self, U2_lnr=None, fac_iter=1, mode='iter', fac_rcir=0.8):
         """
         pot2 can be:
             agama.Potential
@@ -696,64 +696,18 @@ class IterSolver:
         quad = self.quad
 
         # ---------------------------------------------
-        if U2_lnr is None:
-            U2_lnr = self.stats[-1].U_lnr_new
-
-        if mode == 'first':
-            U1_lnr = self.stats[0].U_lnr.prepare_Ecir()
-            N1_lnr = self.stats[0].N_lnr
-            lnrcir = U1_lnr.lnrcir_lnrmax_func(lnr)  # in Ui
-        elif mode == 'last':
-            U1_lnr = self.stats[0].U_lnr
-            N1_lnr = self.stats[0].N_lnr
-            Uf_lnr = self.stats[-1].U_lnr.prepare_Ecir()
-            # dU_lnr = self.stats[-1].dU_lnr
-            dU_E1 = self.stats[-1].dU_E
-            E1 = U1_lnr(lnr)
-            # Ef = E1 + dU_lnr(lnr)
-            Ef = E1 + dU_E1(E1)
-            lnrcir = Uf_lnr.lnrcir_E_func(Ef)  # in Uf
-        elif mode == 'first+last':
-            U1_lnr = self.stats[0].U_lnr.prepare_Ecir()
-            N1_lnr = self.stats[0].N_lnr
-            Uf_lnr = self.stats[-1].U_lnr.prepare_Ecir()
-            # dU_lnr = self.stats[-1].dU_lnr
-            dU_E1 = self.stats[-1].dU_E
-            E1 = U1_lnr(lnr)
-            # Ef = E1 + dU_lnr(lnr)
-            Ef = E1 + dU_E1(E1)
-            lnrcir1 = U1_lnr.lnrcir_E_func(E1) + np.log(fac_rcir)
-            lnrcirf = Uf_lnr.lnrcir_E_func(Ef) + np.log(1 - fac_rcir)
-            lnrcir = np.logaddexp(lnrcir1, lnrcirf)
-        elif mode == 'iter':
-            U1_lnr = self.stats[-1].U_lnr.prepare_Ecir()
-            N1_lnr = self.stats[-1].N_lnr
-            lnrcir = U1_lnr.lnrcir_lnrmax_func(lnr)
+        if mode == 'iter':
+            U1_lnr = self.stats[-1].U_lnr
+            f1_lnr = self.stats[-1].f_lnr
         else:
             raise ValueError
 
-        E1 = U1_lnr(lnr)
-        dU = U2_lnr(lnrcir) - U1_lnr(lnrcir)  # dU(r)
-        E2 = E1 + dU
-        with np.errstate(invalid='ignore'):
-            lnr2 = U2_lnr.lnrmax_E_func(E2)  # supress the error with E2>0
+        if U2_lnr is None:
+            U2_lnr = self.stats[-1].U_lnr_new
 
-        dU_E1 = _interp_y_E(E1, dU, U1_lnr.U_min)   # XXX: what's the problem?, E1 can be ?
-        dU_E1_der1 = dU_E1.derivative(1)(E1)
-        # dU_lnr = CubicSpline(lnr, dU)
-        # dU_E1_der1 = dU_lnr.derivative(1)(lnr) * U1_lnr.der1(lnr)
-
-        # ---------------------------------------------
-        N1 = N1_lnr(E=E1)
-        N2 = N1 / (1 + dU_E1_der1)
-
-        ix = lnr2 < lnr_max  # might get nan
-        if True:
-            assert np.all(np.diff(lnr2[ix]) > 0)  # XXX: why sometimes fail?
-        N2_lnr = interp_y_lnr(lnr2[ix], N2[ix], U_lnr=U2_lnr)
-
+        N2_lnr = compute_N_var(lnr, f1_lnr, U1_lnr, U2_lnr, quad, lnr_min)
         g2_lnr = compute_g(lnr, U2_lnr, quad, lnr_min)
-        f2_lnr = make_f_lnr(N2_lnr, g2_lnr)
+        f2_lnr = make_f_lnr(N2_lnr, g2_lnr, U2_lnr)
 
         # temporary
         ρ2_lnr_d_ = compute_ρ(lnr, f2_lnr, U2_lnr, quad, lnr_max)
@@ -774,14 +728,12 @@ class IterSolver:
         stat = dict(U_lnr=U2_lnr, N_lnr=N2_lnr, f_lnr=f2_lnr, g_lnr=g2_lnr,
                     ρ_lnr_d=ρ2_lnr_d, M_lnr_d=M2_lnr_d, ρ_d=ρ2_d, M_d=M2_d,
                     U_lnr_new=U3_lnr,  # Unew corresponds to M and ρ
-                    dU_E=dU_E1,
-                    # dU_lnr=dU_lnr,
                     )
         self.stats.append(obj_attrs(stat))
 
         return obj_attrs(locals(), excl=['self', 'ix'])
 
-    def iter_solve(self, fac_iter=0.5, mode='first', fac_rcir=0.8, niter=50, rtol=1e-3, atol=0):
+    def iter_solve(self, fac_iter=0.5, mode='iter', fac_rcir=0.8, niter=50, rtol=1e-3, atol=0):
         for i in range(niter):
             res = self.new_potential(fac_iter=fac_iter, mode=mode, fac_rcir=fac_rcir)
             is_ok = np.allclose(self.stats[-1].M_d, self.stats[-2].M_d, rtol=rtol, atol=atol)
