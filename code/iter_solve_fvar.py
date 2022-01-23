@@ -607,7 +607,7 @@ class IterSolver:
         d2ρdUdlnr0_lnr = compute_d2ρdUdlnr(lnr, ρ0_d, M0, G)
 
         ρ0_lnr_d = interp_y_lnr(lnr, ρ0_d, clip=True)  # tracer density
-        M0_lnr_d = interp_y_lnr(lnr, M0_d)
+        M0_lnr_d = interp_y_lnr(lnr, M0_d, extrapolate=('linear', 'const'))
 
         # calculate f0 in U0 and new N1 in U1
         # ---------------------------------------------
@@ -628,11 +628,15 @@ class IterSolver:
 
         # ---------------------------------------------
         set_attrs(self, locals(), excl=['self'])
-        stat = dict(U_lnr=U1_lnr, N_lnr=N1_lnr, f_lnr=f1_lnr, g_lnr=g1_lnr,
-                    ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
-                    U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
-                    )
-        self.stats = [obj_attrs(stat)]
+        stat0 = dict(U_lnr=U0_lnr, N_lnr=N0_lnr, f_lnr=f0_lnr, g_lnr=g0_lnr,
+                     ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
+                     U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
+                     )
+        stat1 = dict(U_lnr=U1_lnr, N_lnr=N1_lnr, f_lnr=f1_lnr, g_lnr=g1_lnr,
+                     ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
+                     U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
+                     )
+        self.stats = [obj_attrs(stat0), obj_attrs(stat1)]
 
     def new_potential(self, U2_lnr=None, fac_iter=1):
         """
@@ -667,9 +671,9 @@ class IterSolver:
         M2_d = M2_lnr_d_tmp.y * fac_iter + self.stats[-1].M_d * (1 - fac_iter)
 
         ρ2_lnr_d = interp_y_lnr(lnr, ρ2_d)
-        M2_lnr_d = interp_y_lnr(lnr, M2_d)
+        M2_lnr_d = interp_y_lnr(lnr, M2_d, extrapolate=('linear', 'const'))
 
-        M2_lnr = interp_y_lnr(lnr, M2_d + self.M1_g)
+        M2_lnr = interp_y_lnr(lnr, M2_d + self.M1_g, extrapolate=('linear', 'const'))
         U3_lnr = compute_U(lnr, M2_lnr, quad, lnr_cen, lnr_min, lnr_max, G=self.G)
 
         # ---------------------------------------------
@@ -681,13 +685,13 @@ class IterSolver:
 
         return obj_attrs(locals(), excl=['self', 'ix'])
 
-    def iter_solve(self, fac_iter=0.5, mode='iter', fac_rcir=0.8, niter=50, rtol=1e-3, atol=0):
+    def iter_solve(self, fac_iter=0.25, niter=200, rtol=1e-3, atol=0):
         for i in range(niter):
-            res = self.new_potential(fac_iter=fac_iter, mode=mode, fac_rcir=fac_rcir)
+            res = self.new_potential(fac_iter=fac_iter)
             is_ok = np.allclose(self.stats[-1].M_d, self.stats[-2].M_d, rtol=rtol, atol=atol)
             if is_ok:
-                print(f'Model "{mode}": Converged at {i+1}-th iteration! ')
+                print(f'Converged at {i+1}-th iteration!')
                 break
         else:
-            print(f'Model "{mode}": Not converged within {niter} iterations!')
+            print(f'Not converged within {niter} iterations!')
         return res
