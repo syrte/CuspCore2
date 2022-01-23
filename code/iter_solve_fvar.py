@@ -94,41 +94,6 @@ class CubicSplineExtrap(CubicSpline):
                 self.x, self.c = np.hstack(xs), np.hstack(cs)
 
 
-def extend_linspace(r, rmin, rmax):
-    """
-    extend given linspace to cover [rmin, rmax].
-
-    Example
-    -------
-    r = np.linspace(-6, 1, 1001)
-    rmin, rmax = -8, 2
-    a = extend_linspace(r, rmin, rmax)
-    assert np.allclose(np.diff(a).mean(), np.diff(r).mean())
-    assert np.allclose((a), np.linspace(*(a[[0, -1]]), len(a)), rtol=1e-10, atol=1e-20)
-    assert a[0] - rmin <= 1e-10 and a[-1] - rmax >= -1e-10
-    """
-    dr = np.diff(r).mean()
-    a0 = np.arange(r[0] - dr, rmin - dr, -dr)[::-1]
-    a1 = np.arange(r[-1] + dr, rmax + dr, dr)
-    return np.hstack([a0, r, a1])
-
-
-def extend_geomspace(r, rmin, rmax):
-    """
-    extend given geomspace to cover [rmin, rmax].
-
-    Example
-    -------
-    r = np.geomspace(1e-6, 1e1, 1001)
-    rmin, rmax = 1e-8, 1e2
-    a = extend_geomspace(r, rmin, rmax)
-    assert np.allclose(np.diff(np.log(a)).mean(), np.diff(np.log(r)).mean())
-    assert np.allclose((a), np.geomspace(*(a[[0, -1]]), len(a)), rtol=1e-10, atol=1e-20)
-    assert a[0] - rmin <= 1e-10 and a[-1] - rmax >= -1e-10
-    """
-    return np.exp(extend_linspace(np.log(r), np.log(rmin), np.log(rmax)))
-
-
 def pad3d(x):
     return np.stack([x, x * 0, x * 0], axis=-1)
 
@@ -338,8 +303,8 @@ class make_f_lnr:
 
 
 class make_N_lnr:
-    def __init__(self, f_lnr, g_lnr):
-        self.f_lnr, self.g_lnr = f_lnr, g_lnr
+    def __init__(self, f_lnr, g_lnr, U_lnr=None):
+        set_attrs(self, locals(), excl=['self'])
 
     def __call__(self, *args, **kwargs):
         "Return N(lnr), N(r), or N(E) depending on kwargs"
@@ -363,6 +328,7 @@ class GausQuad:
         set_attrs(self, locals(), excl=['self'])
 
 
+# obsolete
 def compute_f_old(lnr, U_lnr, ρ_U, quad, lnr_max=None):
     """
     Obsolete: ρ_U is not as stable as d2ρdUdlnr_lnr
@@ -451,6 +417,7 @@ def compute_ρ(lnr, f_lnr, U_lnr, quad, lnr_max=None):
     return interp_y_lnr(lnr, ρ, U_lnr=U_lnr)
 
 
+# obsolete
 def compute_M_f(lnr, f_lnr, U_lnr, quad, lnr_min=None, lnr_max=None):
     "Alternative way for calcute M. Expected to be more precise than compute_M from ρ?"
     # XXX: a bug to be resolve.
@@ -504,6 +471,7 @@ def compute_U(lnr, M_lnr, quad, lnr_cen=None, lnr_min=None, lnr_max=None, G=1):
     return interp_U_lnr(lnr, U=U[2:], U_min=U[0], G=G)
 
 
+# obsolete
 def _truncate_radius(r, ρ, tol=10, ret_idx=True):
     "truncate the radius where density is too close to zero"
     ρ_min = ρ[ρ > 0].min() * tol
@@ -569,8 +537,7 @@ class IterSolver:
 
     def __init__(self, den0_d, den0_g, den1_g,
                  r=np.geomspace(1e-6, 1e2, 2000),
-                 rlim=None,
-                 nquad=100, G=1):
+                 rlim=None, nquad=100, G=1):
         """
         Initial state:
             den0_d in pot0_d+pot0_g
@@ -590,6 +557,7 @@ class IterSolver:
             Used for calculating Umin, which is crutial for interpolating U(lnr),
             should be smaller than rmin.
         """
+        # ---------------------------------------------
         # intialize
         if rlim is None:
             rcen, rmin, rmax = None, None, None
@@ -598,11 +566,14 @@ class IterSolver:
         else:
             rcen, rmin, rmax = rlim
 
-        # ---------------------------------------------
-        # prepare potentials
         rmin = none_min(rmin, r[0] * 1e-2)
         rcen = none_min(rcen, rmin * 1e-2)
         rmax = none_min(rmax, r[-1] * 1e1)
+
+        lnr, lnr_min, lnr_max, lnr_cen = np.log(r), np.log(rmin), np.log(rmax), np.log(rcen)
+
+        # ---------------------------------------------
+        # prepare potentials
 
         def make_pot(den, rmin, rmax):
             return agama.Potential(
@@ -619,38 +590,28 @@ class IterSolver:
 
         # ---------------------------------------------
         # prepare interplators
-        # we need a table covering rmin to rmax
-        r_ = extend_geomspace(r, rmin, rmax)
-        x_ = pad3d(r_)
+        x = pad3d(r)
+        ρ0_d = den0_d.density(x)
+        ρ0_g = den0_g.density(x)
+        ρ1_g = den1_g.density(x)
+        M0_d = den0_d.enclosedMass(r)
+        M0_g = den0_g.enclosedMass(r)
+        M1_g = den1_g.enclosedMass(r)  # needed for calculating Mtot later
 
-        ρ0_d = den0_d.density(x_)
-        M0_d = den0_d.enclosedMass(r_)
-        M0 = den0_d.enclosedMass(r_) + den0_g.enclosedMass(r_)  # total mass
-        U0 = pot0.potential(x_)
-        U1 = pot1.potential(x_)
-        dU = U1 - U0
+        M0 = M0_d + M0_g  # total mass
+        U0 = pot0.potential(x)
+        U1 = pot1.potential(x)
 
-        lnr_ = np.log(r_)
-        U0_lnr = interp_U_lnr(lnr_, U0, U0_min, G=G)
-        U1_lnr = interp_U_lnr(lnr_, U1, U1_min, G=G)
-        dU_lnr = CubicSpline(lnr_, dU)  # need cover rmin for integrating N1
-        d2ρdUdlnr0_lnr = compute_d2ρdUdlnr(lnr_, ρ0_d, M0, G)
+        U0_lnr = interp_U_lnr(lnr, U0, U0_min, G=G)
+        U1_lnr = interp_U_lnr(lnr, U1, U1_min, G=G)
+        d2ρdUdlnr0_lnr = compute_d2ρdUdlnr(lnr, ρ0_d, M0, G)
 
-        ρ0_lnr_d = interp_y_lnr(lnr_, ρ0_d, clip=True)  # tracer density
-        M0_lnr_d = interp_y_lnr(lnr_, M0_d)
-
-        # obsolete
-        # ix = _truncate_radius(r_, ρ0_d, tol=10)  # XXX: careful
-        # ρ0_U0_d = _interp_y_E(U0[ix], ρ0_d[ix], U0_min)  # need cover rmin for integrating f0
-        # f0_lnr_old = compute_f_old(lnr, U0_lnr, ρ0_U0_d, quad, lnr_max)
-
-        del r_, x_, lnr_, ρ0_d, M0_d, U0, U1, dU  # clean
+        ρ0_lnr_d = interp_y_lnr(lnr, ρ0_d, clip=True)  # tracer density
+        M0_lnr_d = interp_y_lnr(lnr, M0_d)
 
         # calculate f0 in U0 and new N1 in U1
         # ---------------------------------------------
         quad = GausQuad(nquad)
-        lnr, lnr_min, lnr_max, lnr_cen = np.log(r), np.log(rmin), np.log(rmax), np.log(rcen)
-
         f0_lnr = compute_f(lnr, U0_lnr, d2ρdUdlnr0_lnr, quad, lnr_max)
         N1_lnr = compute_N_var(lnr, f0_lnr, U0_lnr, U1_lnr, quad, lnr_min)
         g1_lnr = compute_g(lnr, U1_lnr, quad, lnr_min)
@@ -659,21 +620,11 @@ class IterSolver:
         # ---------------------------------------------
         if True:
             # for self-consistency check
-            g1_lnr = compute_g(lnr, U1_lnr, quad, lnr_min)
             g0_lnr = compute_g(lnr, U0_lnr, quad, lnr_min)
             N0_lnr = make_N_lnr(f0_lnr, g0_lnr)
             ρ0_lnr_d_ = compute_ρ(lnr, f0_lnr, U0_lnr, quad, lnr_max)
             M0_lnr_d_ = compute_M(lnr, ρ0_lnr_d_, quad, lnr_cen, lnr_min)
             U0_lnr_d_ = compute_U(lnr, M0_lnr_d_, quad, lnr_cen, lnr_min, lnr_max, G=G)
-            # M0_lnr_d_f = compute_M_f(lnr, f0_lnr, U0_lnr, quad, lnr_min, lnr_max)  # bug
-
-        x = pad3d(r)
-        ρ0_d = den0_d.density(x)
-        ρ0_g = den0_g.density(x)
-        ρ1_g = den1_g.density(x)
-        M0_d = den0_d.enclosedMass(r)
-        M0_g = den0_g.enclosedMass(r)
-        M1_g = den1_g.enclosedMass(r)  # needed for calculating Mtot later
 
         # ---------------------------------------------
         set_attrs(self, locals(), excl=['self'])
@@ -683,7 +634,7 @@ class IterSolver:
                     )
         self.stats = [obj_attrs(stat)]
 
-    def new_potential(self, U2_lnr=None, fac_iter=1, mode='iter', fac_rcir=0.8):
+    def new_potential(self, U2_lnr=None, fac_iter=1):
         """
         pot2 can be:
             agama.Potential
@@ -691,36 +642,33 @@ class IterSolver:
             array of potential values at r
         mode: 'first', 'last', 'first+last', 'iter', 
         """
+        # initialize
         r, lnr = self.r, self.lnr
         lnr_min, lnr_max, lnr_cen = self.lnr_min, self.lnr_max, self.lnr_cen
         quad = self.quad
 
-        # ---------------------------------------------
-        if mode == 'iter':
-            U1_lnr = self.stats[-1].U_lnr
-            f1_lnr = self.stats[-1].f_lnr
-        else:
-            raise ValueError
+        U1_lnr = self.stats[-1].U_lnr
+        f1_lnr = self.stats[-1].f_lnr
 
         if U2_lnr is None:
             U2_lnr = self.stats[-1].U_lnr_new
 
+        # new distribution
         N2_lnr = compute_N_var(lnr, f1_lnr, U1_lnr, U2_lnr, quad, lnr_min)
         g2_lnr = compute_g(lnr, U2_lnr, quad, lnr_min)
         f2_lnr = make_f_lnr(N2_lnr, g2_lnr, U2_lnr)
 
         # temporary
-        ρ2_lnr_d_ = compute_ρ(lnr, f2_lnr, U2_lnr, quad, lnr_max)
-        M2_lnr_d_ = compute_M(lnr, ρ2_lnr_d_, quad, lnr_cen, lnr_min)
-        # M2_d_ = compute_M(lnr, f2_lnr, U2_lnr, quad, lnr_min, lnr_max).y # bug
+        ρ2_lnr_d_tmp = compute_ρ(lnr, f2_lnr, U2_lnr, quad, lnr_max)
+        M2_lnr_d_tmp = compute_M(lnr, ρ2_lnr_d_tmp, quad, lnr_cen, lnr_min)
 
-        # ---------------------------------------------
         # weighted update
-        ρ2_d = ρ2_lnr_d_.y * fac_iter + self.stats[-1].ρ_d * (1 - fac_iter)
-        M2_d = M2_lnr_d_.y * fac_iter + self.stats[-1].M_d * (1 - fac_iter)
+        ρ2_d = ρ2_lnr_d_tmp.y * fac_iter + self.stats[-1].ρ_d * (1 - fac_iter)
+        M2_d = M2_lnr_d_tmp.y * fac_iter + self.stats[-1].M_d * (1 - fac_iter)
 
         ρ2_lnr_d = interp_y_lnr(lnr, ρ2_d)
         M2_lnr_d = interp_y_lnr(lnr, M2_d)
+
         M2_lnr = interp_y_lnr(lnr, M2_d + self.M1_g)
         U3_lnr = compute_U(lnr, M2_lnr, quad, lnr_cen, lnr_min, lnr_max, G=self.G)
 
