@@ -533,8 +533,6 @@ def none_max(x, a):
 
 
 class IterSolver:
-    # Note: any changes of the constants must be made before calling IterSolver!
-
     def __init__(self, den0_d, den0_g, den1_g,
                  r=np.geomspace(1e-6, 1e2, 2000),
                  rlim=None, nquad=100, G=1):
@@ -551,13 +549,11 @@ class IterSolver:
             The code does not expect tracer density with slope greater than -2 in the center.
         r:  array
             The radial range interested, use extrapolation outside this range.
-        rmin, rmax:  float
-            The radial range used for integration, should exceed r sufficiently.
-        rcen:  float
-            Used for calculating Umin, which is crutial for interpolating U(lnr),
+        rlim: 3-tuple (rcen, rmin, rmax)
+            [rmin, rmax] is the radial range used for integration, should exceed r sufficiently.
+            rcen is used for calculating Umin, which is crutial for interpolating U(lnr),
             should be smaller than rmin.
         """
-        # ---------------------------------------------
         # intialize
         if rlim is None:
             rcen, rmin, rmax = None, None, None
@@ -570,11 +566,10 @@ class IterSolver:
         rcen = none_min(rcen, rmin * 1e-2)
         rmax = none_min(rmax, r[-1] * 1e1)
 
-        lnr, lnr_min, lnr_max, lnr_cen = np.log(r), np.log(rmin), np.log(rmax), np.log(rcen)
+        lnr_cen, lnr_min, lnr_max = np.log(rcen), np.log(rmin), np.log(rmax)
+        lnr = np.log(r)
 
-        # ---------------------------------------------
         # prepare potentials
-
         def make_pot(den, rmin, rmax):
             return agama.Potential(
                 type="Multipole", density=den, rmin=rmin, rmax=rmax,
@@ -583,13 +578,12 @@ class IterSolver:
         pot0_d = make_pot(den0_d, rmin, rmax)
         pot0_g = make_pot(den0_g, rmin, rmax)
         pot1_g = make_pot(den1_g, rmin, rmax)
-        pot0 = agama.Potential(pot0_d, pot0_g)
-        pot1 = agama.Potential(pot0_d, pot1_g)
+        pot0 = agama.Potential(pot0_d, pot0_g)  # total potential
+        pot1 = agama.Potential(pot0_d, pot1_g)  # total potential
         U0_min = pot0.potential(pad3d(0))
         U1_min = pot1.potential(pad3d(0))
 
-        # ---------------------------------------------
-        # prepare interplators
+        # calculate profiles
         x = pad3d(r)
         ρ0_d = den0_d.density(x)
         ρ0_g = den0_g.density(x)
@@ -597,11 +591,12 @@ class IterSolver:
         M0_d = den0_d.enclosedMass(r)
         M0_g = den0_g.enclosedMass(r)
         M1_g = den1_g.enclosedMass(r)  # needed for calculating Mtot later
-
         M0 = M0_d + M0_g  # total mass
+
         U0 = pot0.potential(x)
         U1 = pot1.potential(x)
 
+        # prepare interplators
         U0_lnr = interp_U_lnr(lnr, U0, U0_min, G=G)
         U1_lnr = interp_U_lnr(lnr, U1, U1_min, G=G)
         d2ρdUdlnr0_lnr = compute_d2ρdUdlnr(lnr, ρ0_d, M0, G)
@@ -610,33 +605,24 @@ class IterSolver:
         M0_lnr_d = interp_y_lnr(lnr, M0_d, extrapolate=('linear', 'const'))
 
         # calculate f0 in U0 and new N1 in U1
-        # ---------------------------------------------
         quad = GausQuad(nquad)
+
         f0_lnr = compute_f(lnr, U0_lnr, d2ρdUdlnr0_lnr, quad, lnr_max)
-        N1_lnr = compute_N_var(lnr, f0_lnr, U0_lnr, U1_lnr, quad, lnr_min)
-        g1_lnr = compute_g(lnr, U1_lnr, quad, lnr_min)
-        f1_lnr = make_f_lnr(N1_lnr, g1_lnr, U1_lnr)
+        g0_lnr = compute_g(lnr, U0_lnr, quad, lnr_min)
+        N0_lnr = make_N_lnr(f0_lnr, g0_lnr)
 
-        # ---------------------------------------------
-        if True:
-            # for self-consistency check
-            g0_lnr = compute_g(lnr, U0_lnr, quad, lnr_min)
-            N0_lnr = make_N_lnr(f0_lnr, g0_lnr)
-            ρ0_lnr_d_ = compute_ρ(lnr, f0_lnr, U0_lnr, quad, lnr_max)
-            M0_lnr_d_ = compute_M(lnr, ρ0_lnr_d_, quad, lnr_cen, lnr_min)
-            U0_lnr_d_ = compute_U(lnr, M0_lnr_d_, quad, lnr_cen, lnr_min, lnr_max, G=G)
+        # for self-consistency check
+        ρ0_lnr_d_ = compute_ρ(lnr, f0_lnr, U0_lnr, quad, lnr_max)
+        M0_lnr_d_ = compute_M(lnr, ρ0_lnr_d_, quad, lnr_cen, lnr_min)
+        U0_lnr_d_ = compute_U(lnr, M0_lnr_d_, quad, lnr_cen, lnr_min, lnr_max, G=G)
 
-        # ---------------------------------------------
+        # return
         set_attrs(self, locals(), excl=['self'])
         stat0 = dict(U_lnr=U0_lnr, N_lnr=N0_lnr, f_lnr=f0_lnr, g_lnr=g0_lnr,
                      ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
                      U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
                      )
-        stat1 = dict(U_lnr=U1_lnr, N_lnr=N1_lnr, f_lnr=f1_lnr, g_lnr=g1_lnr,
-                     ρ_lnr_d=ρ0_lnr_d, M_lnr_d=M0_lnr_d, ρ_d=ρ0_d, M_d=M0_d,
-                     U_lnr_new=U1_lnr,  # Unew corresponds to M and ρ
-                     )
-        self.stats = [obj_attrs(stat0), obj_attrs(stat1)]
+        self.stats = [obj_attrs(stat0)]
 
     def new_potential(self, U2_lnr=None, fac_iter=1):
         """
@@ -653,7 +639,6 @@ class IterSolver:
 
         U1_lnr = self.stats[-1].U_lnr
         f1_lnr = self.stats[-1].f_lnr
-
         if U2_lnr is None:
             U2_lnr = self.stats[-1].U_lnr_new
 
@@ -662,11 +647,11 @@ class IterSolver:
         g2_lnr = compute_g(lnr, U2_lnr, quad, lnr_min)
         f2_lnr = make_f_lnr(N2_lnr, g2_lnr, U2_lnr)
 
-        # temporary
+        # temporary density
         ρ2_lnr_d_tmp = compute_ρ(lnr, f2_lnr, U2_lnr, quad, lnr_max)
         M2_lnr_d_tmp = compute_M(lnr, ρ2_lnr_d_tmp, quad, lnr_cen, lnr_min)
 
-        # weighted update
+        # weighted new density and profile
         ρ2_d = ρ2_lnr_d_tmp.y * fac_iter + self.stats[-1].ρ_d * (1 - fac_iter)
         M2_d = M2_lnr_d_tmp.y * fac_iter + self.stats[-1].M_d * (1 - fac_iter)
 
@@ -676,7 +661,7 @@ class IterSolver:
         M2_lnr = interp_y_lnr(lnr, M2_d + self.M1_g, extrapolate=('linear', 'const'))
         U3_lnr = compute_U(lnr, M2_lnr, quad, lnr_cen, lnr_min, lnr_max, G=self.G)
 
-        # ---------------------------------------------
+        # return
         stat = dict(U_lnr=U2_lnr, N_lnr=N2_lnr, f_lnr=f2_lnr, g_lnr=g2_lnr,
                     ρ_lnr_d=ρ2_lnr_d, M_lnr_d=M2_lnr_d, ρ_d=ρ2_d, M_d=M2_d,
                     U_lnr_new=U3_lnr,  # Unew corresponds to M and ρ
