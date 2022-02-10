@@ -502,7 +502,7 @@ class IterSolver:
             The radial range interested, use extrapolation outside this range.
         rlim: 3-tuple (rcen, rmin, rmax)
             [rmin, rmax] is the radial range used for integration, should exceed r sufficiently.
-            rcen is used for calculating Umin, which is crutial for interpolating U(lnr),
+            rcen is used for calculating Umin, which is crucial for interpolating U(lnr),
             should be smaller than rmin.
         """
         # intialize
@@ -577,11 +577,6 @@ class IterSolver:
 
     def new_potential(self, U2_lnr=None, fac_iter=1):
         """
-        pot2 can be:
-            agama.Potential
-            potential function
-            array of potential values at r
-        mode: 'first', 'last', 'first+last', 'iter', 
         """
         # initialize
         r, lnr = self.r, self.lnr
